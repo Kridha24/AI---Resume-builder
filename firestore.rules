@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Resumes Collection
+    match /resumes/{resumeId} {
+      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+
+      // Resume Versions Subcollection
+      match /versions/{versionId} {
+        allow read, update, delete: if request.auth != null && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
+        allow create: if request.auth != null && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
+      }
+    }
+    
+    // Cover Letters Collection
+    match /coverLetters/{letterId} {
+      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+    
+  }
+}

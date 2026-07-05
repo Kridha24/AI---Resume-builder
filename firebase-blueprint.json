@@ -1,0 +1,56 @@
+{
+  "collections": {
+    "resumes": {
+      "schema": {
+        "id": "string",
+        "userId": "string",
+        "name": "string",
+        "data": "map",
+        "layout": "map",
+        "createdAt": "string",
+        "updatedAt": "string"
+      },
+      "indexes": [
+        {
+          "fields": [
+            { "fieldPath": "userId", "order": "ASCENDING" },
+            { "fieldPath": "updatedAt", "order": "DESCENDING" }
+          ]
+        }
+      ]
+    },
+    "coverLetters": {
+      "schema": {
+        "id": "string",
+        "userId": "string",
+        "title": "string",
+        "targetRole": "string",
+        "targetCompany": "string",
+        "jobDescription": "string",
+        "content": "string",
+        "createdAt": "string",
+        "updatedAt": "string"
+      },
+      "indexes": [
+        {
+          "fields": [
+            { "fieldPath": "userId", "order": "ASCENDING" },
+            { "fieldPath": "updatedAt", "order": "DESCENDING" }
+          ]
+        }
+      ]
+    },
+    "resumeVersions": {
+      "schema": {
+        "id": "string",
+        "resumeId": "string",
+        "name": "string",
+        "data": "map",
+        "layout": "map",
+        "createdAt": "string",
+        "updatedAt": "string"
+      },
+      "path": "/resumes/{resumeId}/versions/{versionId}"
+    }
+  }
+}

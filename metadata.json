@@ -1,0 +1,6 @@
+{
+  "name": "Resume Builder",
+  "description": "A high-level professional resume builder with customizable layouts, real-time preview, AI-assisted content refinement, and print-ready PDF export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
