@@ -18,6 +18,10 @@ import {
 // Load environment variables
 dotenv.config();
 
+const app = express();
+
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+
 // Initialize GoogleGenAI client (only if key exists)
 let ai: GoogleGenAI | null = null;
 const apiKey = process.env.GEMINI_API_KEY;
@@ -126,8 +130,14 @@ function sanitizeAndWrapContent(
   return `<${tag}>\n${safeContent}\n</${tag}>`;
 }
 
-// Create and configure Express app
-const app = express();
+// Request ID middleware for tracing and diagnostics
+app.use((req: any, res: any, next: any) => {
+  req.requestId =
+    req.headers["x-request-id"] ||
+    `req-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
+  res.setHeader("X-Request-Id", req.requestId);
+  next();
+});
 
 // Route-specific payload limits:
 // Allow up to 10mb for resume parsing and job description extraction
@@ -147,12 +157,82 @@ app.use((req, res, next) => {
 // Attach auth context and rate limiting
 app.use(authMiddleware);
 
+/**
+ * Detects whether a job description input consists of multiple job titles
+ * or is merely a title without any requirements/responsibilities.
+ */
+export function detectJobDescriptionQuality(rawText: string): {
+  isMultipleRoles: boolean;
+  detectedRoles: string[];
+  isTitleOnly: boolean;
+  extractedTitle?: string;
+} {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return { isMultipleRoles: false, detectedRoles: [], isTitleOnly: false };
+  }
+
+  // Split by common delimiters (commas, newlines, semicolons, bullets)
+  const lines = trimmed
+    .split(/[\n,;•\u2022\u25cf\u25cb\u2013\u2014]/)
+    .map((s) => s.replace(/^[\s.,;•\u2022\u25cf\u25cb\u2013\u2014-]+|[\s.,;•\u2022\u25cf\u25cb\u2013\u2014-]+$/g, "").trim())
+    .filter(Boolean);
+
+  const roleRegex =
+    /\b(developer|engineer|intern|internship|analyst|designer|manager|lead|architect|specialist|consultant|administrator|scientist|officer|associate)\b/i;
+
+  // Check if items are distinct job titles
+  const potentialRoles = lines.filter((line) => {
+    return line.length >= 3 && line.length <= 60 && roleRegex.test(line);
+  });
+
+  // Check for presence of substantive requirement/responsibility signals
+  const contentSignalRegex =
+    /\b(requirements?|responsibilities|qualifications?|must have|experience|years?|proficient|skills?|degree|bachelor|master|working with|responsible for|build|maintain|design|develop)\b/i;
+  const hasContentSignals = contentSignalRegex.test(trimmed);
+
+  // If multiple potential roles found and virtually no requirement signals:
+  if (
+    potentialRoles.length >= 2 &&
+    (!hasContentSignals || trimmed.length < potentialRoles.join(" ").length + 40)
+  ) {
+    return {
+      isMultipleRoles: true,
+      detectedRoles: Array.from(new Set(potentialRoles)),
+      isTitleOnly: false,
+    };
+  }
+
+  // If very short and only 1 role with no requirements or responsibilities:
+  if (potentialRoles.length === 1 && trimmed.length < 70 && !hasContentSignals) {
+    return {
+      isMultipleRoles: false,
+      detectedRoles: [],
+      isTitleOnly: true,
+      extractedTitle: potentialRoles[0],
+    };
+  }
+
+  return {
+    isMultipleRoles: false,
+    detectedRoles: [],
+    isTitleOnly: false,
+  };
+}
+
 // Create router for API endpoints
 const apiRouter = express.Router();
 
 // API Health Check
-apiRouter.get("/health", (req, res) => {
-  res.json({ status: "ok", aiEnabled: !!ai });
+apiRouter.get("/health", (req: any, res) => {
+  res.json({
+    status: "ok",
+    aiEnabled: !!ai,
+    hasKey: !!process.env.GEMINI_API_KEY,
+    model: GEMINI_MODEL,
+    timestamp: new Date().toISOString(),
+    requestId: req.requestId,
+  });
 });
 
 // AI Endpoint: Enhance resume bullet points
@@ -194,7 +274,7 @@ Do not include any Markdown tags or code block wraps. Return only the raw JSON a
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -261,7 +341,7 @@ Return only the clean summary text. Do not put quotes around it or add any label
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
         }),
         30000,
@@ -312,7 +392,7 @@ Your refined version should:
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
         }),
         30000,
@@ -354,7 +434,7 @@ Return the response as a JSON array of strings. Do not include markdown code blo
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -495,7 +575,7 @@ Return only valid, parseable JSON conforming to this schema. Ensure every item h
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: contents,
           config: {
             responseMimeType: "application/json",
@@ -534,14 +614,39 @@ apiRouter.post(
   async (req: any, res: any) => {
     const { rawText } = req.body;
     if (!rawText || typeof rawText !== "string" || !rawText.trim()) {
-      return res
-        .status(400)
-        .json({ error: "Job description text is required." });
+      return res.status(400).json({
+        code: "INVALID_INPUT",
+        error: "Job description text is required.",
+        requestId: req.requestId,
+      });
+    }
+
+    // Check for quality: multiple roles or title-only without requirements
+    const quality = detectJobDescriptionQuality(rawText);
+    if (quality.isMultipleRoles) {
+      return res.status(422).json({
+        code: "MULTIPLE_ROLES_DETECTED",
+        error:
+          "Multiple job roles detected without responsibilities or requirements. Please select one target role and provide its requirements.",
+        detectedRoles: quality.detectedRoles,
+        requestId: req.requestId,
+      });
+    }
+    if (quality.isTitleOnly) {
+      return res.status(422).json({
+        code: "TITLE_ONLY_DETECTED",
+        error: `Only a job title ("${quality.extractedTitle}") was provided. Please include key responsibilities or requirements for this role.`,
+        detectedRole: quality.extractedTitle,
+        requestId: req.requestId,
+      });
     }
 
     if (!ai) {
       return res.status(503).json({
-        error: "AI services are not configured. Please configure GEMINI_API_KEY in Vercel Environment Variables.",
+        code: "MISSING_AI_CONFIG",
+        error:
+          "AI services are not configured. Please configure GEMINI_API_KEY in Vercel Environment Variables.",
+        requestId: req.requestId,
       });
     }
 
@@ -581,7 +686,7 @@ No markdown code fences or conversational text. Return only valid JSON.`;
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           config: {
             responseMimeType: "application/json",
@@ -592,7 +697,17 @@ No markdown code fences or conversational text. Return only valid JSON.`;
       );
 
       const responseText = response.text?.trim() || "{}";
-      const rawParsed = JSON.parse(responseText);
+      let rawParsed: any;
+      try {
+        rawParsed = JSON.parse(responseText);
+      } catch (jsonErr: any) {
+        console.error(`[${req.requestId}] AI JSON Parse Error:`, jsonErr.message);
+        return res.status(502).json({
+          code: "AI_MALFORMED_OUTPUT",
+          error: "AI returned malformed or non-JSON output. Please try again.",
+          requestId: req.requestId,
+        });
+      }
 
       const candidateJob = {
         id: `job-${Date.now()}`,
@@ -605,19 +720,19 @@ No markdown code fences or conversational text. Return only valid JSON.`;
           ? rawParsed.workMode
           : "unspecified",
         responsibilities: Array.isArray(rawParsed.responsibilities)
-          ? rawParsed.responsibilities.map(String)
+          ? rawParsed.responsibilities.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         requiredSkills: Array.isArray(rawParsed.requiredSkills)
-          ? rawParsed.requiredSkills.map(String)
+          ? rawParsed.requiredSkills.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         preferredSkills: Array.isArray(rawParsed.preferredSkills)
-          ? rawParsed.preferredSkills.map(String)
+          ? rawParsed.preferredSkills.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         experienceRequirements: Array.isArray(rawParsed.experienceRequirements)
-          ? rawParsed.experienceRequirements.map(String)
+          ? rawParsed.experienceRequirements.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         educationRequirements: Array.isArray(rawParsed.educationRequirements)
-          ? rawParsed.educationRequirements.map(String)
+          ? rawParsed.educationRequirements.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         excerpts: Array.isArray(rawParsed.excerpts)
           ? rawParsed.excerpts.map((e: any, idx: number) => ({
@@ -627,27 +742,87 @@ No markdown code fences or conversational text. Return only valid JSON.`;
             }))
           : [],
         uncertainties: Array.isArray(rawParsed.uncertainties)
-          ? rawParsed.uncertainties.map(String)
+          ? rawParsed.uncertainties.map(String).map((s: string) => s.trim()).filter(Boolean)
           : [],
         rawText,
       };
 
-      const validated = TargetJobSchema.safeParse(candidateJob);
-      if (!validated.success) {
-        console.warn("Parsed JD schema validation issues:", validated.error);
-        return res.status(502).json({
-          error:
-            "Failed to extract valid job requirements from the job description.",
-          details: validated.error.issues,
+      // Check for meaningful content: must have at least one requirement/skill/responsibility
+      const hasMeaningfulContent =
+        candidateJob.responsibilities.length > 0 ||
+        candidateJob.requiredSkills.length > 0 ||
+        candidateJob.preferredSkills.length > 0 ||
+        candidateJob.experienceRequirements.length > 0;
+
+      if (!hasMeaningfulContent) {
+        return res.status(422).json({
+          code: "INSUFFICIENT_REQUIREMENTS",
+          error: `We identified the target role "${candidateJob.role}", but could not find specific requirements, skills, or responsibilities. Please add key responsibilities or skills for this role.`,
+          detectedRole: candidateJob.role,
+          requestId: req.requestId,
         });
       }
 
-      res.json({ targetJob: validated.data });
+      const validated = TargetJobSchema.safeParse(candidateJob);
+      if (!validated.success) {
+        console.warn(`[${req.requestId}] Parsed JD schema validation issues:`, validated.error);
+        return res.status(422).json({
+          code: "AI_SCHEMA_VALIDATION_FAILED",
+          error: "Failed to extract valid job requirements from the job description.",
+          details: validated.error.issues,
+          requestId: req.requestId,
+        });
+      }
+
+      res.json({ targetJob: validated.data, requestId: req.requestId });
     } catch (error: any) {
-      console.error("AI Parse JD Error:", error);
-      res
-        .status(500)
-        .json({ error: error.message || "Failed to parse job description." });
+      console.error(`[${req.requestId}] AI Parse JD Error:`, error.message || error);
+
+      const errMsg = String(error?.message || error || "");
+      if (errMsg.includes("timed out") || error.name === "TimeoutError") {
+        return res.status(504).json({
+          code: "AI_TIMEOUT",
+          error: "AI request timed out. Please try again.",
+          requestId: req.requestId,
+        });
+      }
+      if (
+        errMsg.includes("429") ||
+        errMsg.includes("RESOURCE_EXHAUSTED") ||
+        errMsg.toLowerCase().includes("quota")
+      ) {
+        return res.status(429).json({
+          code: "AI_QUOTA_EXCEEDED",
+          error: "AI quota exceeded or rate limited. Please try again later.",
+          requestId: req.requestId,
+        });
+      }
+      if (
+        errMsg.includes("API key not valid") ||
+        errMsg.includes("UNAUTHENTICATED") ||
+        errMsg.includes("PERMISSION_DENIED") ||
+        errMsg.includes("401") ||
+        errMsg.includes("403")
+      ) {
+        return res.status(403).json({
+          code: "AI_AUTH_ERROR",
+          error: "AI authentication failed. Please verify your GEMINI_API_KEY in Vercel.",
+          requestId: req.requestId,
+        });
+      }
+      if (errMsg.includes("not found") || errMsg.includes("404")) {
+        return res.status(502).json({
+          code: "AI_MODEL_NOT_FOUND",
+          error: `Configured Gemini model (${GEMINI_MODEL}) is not available to this API key.`,
+          requestId: req.requestId,
+        });
+      }
+
+      res.status(502).json({
+        code: "AI_PROVIDER_ERROR",
+        error: error.message || "Failed to parse job description.",
+        requestId: req.requestId,
+      });
     }
   }
 );
@@ -755,7 +930,7 @@ No markdown code fences or conversational text. Return only valid JSON.`;
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           config: {
             responseMimeType: "application/json",
@@ -855,7 +1030,7 @@ Keep the letter focused, professional, and limited to 250-350 words. Return ONLY
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
         }),
         30000,
@@ -924,7 +1099,7 @@ Guidelines:
 
     const response = await withTimeout(
       ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: GEMINI_MODEL,
         contents: geminiContents,
       }),
       30000,
@@ -1030,7 +1205,7 @@ Ensure the output is valid, raw JSON ONLY. Begin with "{" and end with "}".`;
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: [{ role: "user", parts: [{ text: promptText }] }],
           config: {
             responseMimeType: "application/json",
@@ -1101,7 +1276,7 @@ Return ONLY valid RAW JSON.`;
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -1159,7 +1334,7 @@ Return RAW JSON only conforming to:
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -1230,7 +1405,7 @@ Return RAW JSON ONLY matching:
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -1295,7 +1470,7 @@ Return raw JSON only matching:
 
       const response = await withTimeout(
         ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: GEMINI_MODEL,
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -1320,5 +1495,14 @@ Return raw JSON only matching:
 // Mount apiRouter at both "/api" and "/" so it works with any Vercel rewrite or direct routing
 app.use("/api", apiRouter);
 app.use("/", apiRouter);
+
+// JSON 404 handler for unmatched /api requests to prevent HTML fallback
+app.use("/api", (req: any, res: any) => {
+  res.status(404).json({
+    code: "NOT_FOUND",
+    error: `API route not found: ${req.method} ${req.originalUrl || req.url}`,
+    requestId: req.requestId,
+  });
+});
 
 export default app;

@@ -70,6 +70,10 @@ export const GuidedWorkflowModal: React.FC<GuidedWorkflowModalProps> = ({
   const [targetJob, setTargetJob] = useState<TargetJob | null>(null);
   const [isParsingJd, setIsParsingJd] = useState(false);
   const [jdParseError, setJdParseError] = useState<string | null>(null);
+  const [jdParseRequestId, setJdParseRequestId] = useState<string | null>(null);
+  const [detectedRoles, setDetectedRoles] = useState<string[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [additionalRoleRequirements, setAdditionalRoleRequirements] = useState("");
 
   // Requirement Match & Clarifications
   const [matches, setMatches] = useState<RequirementMatch[]>([]);
@@ -148,14 +152,16 @@ export const GuidedWorkflowModal: React.FC<GuidedWorkflowModalProps> = ({
   };
 
   // --- Step 2: Parse Job Description ---
-  const handleParseJobDescription = async () => {
-    if (!rawJdText.trim()) {
+  const handleParseJobDescription = async (overrideText?: string) => {
+    const textToParse = (overrideText !== undefined ? overrideText : rawJdText).trim();
+    if (!textToParse) {
       setJdParseError("Please paste the job description text.");
       return;
     }
 
     setIsParsingJd(true);
     setJdParseError(null);
+    setJdParseRequestId(null);
 
     try {
       const token = await getAuthToken();
@@ -165,17 +171,57 @@ export const GuidedWorkflowModal: React.FC<GuidedWorkflowModalProps> = ({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ rawText: rawJdText }),
+        body: JSON.stringify({ rawText: textToParse }),
       });
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || "Failed to parse job description.");
+      const contentType = res.headers.get("content-type") || "";
+      let data: any = null;
+
+      if (contentType.includes("application/json")) {
+        data = await res.json().catch(() => null);
+      } else {
+        const reqId = res.headers.get("x-request-id") || null;
+        if (reqId) setJdParseRequestId(reqId);
+        throw new Error(
+          `Server returned an unexpected non-JSON response (${res.status} ${res.statusText || "Error"}). ` +
+          `If running on Vercel, verify backend API deployment and routing.`
+        );
       }
 
-      const data = await res.json();
+      const reqId = data?.requestId || res.headers.get("x-request-id") || null;
+      if (reqId) setJdParseRequestId(reqId);
+
+      if (!res.ok || !data) {
+        if (data?.code === "MULTIPLE_ROLES_DETECTED" && Array.isArray(data.detectedRoles)) {
+          setDetectedRoles(data.detectedRoles);
+          setJdParseError(data.error || "Multiple roles detected. Please select one target role.");
+          return;
+        }
+
+        if (data?.code === "TITLE_ONLY_DETECTED" && data.detectedRole) {
+          setDetectedRoles([data.detectedRole]);
+          setSelectedRole(data.detectedRole);
+          setJdParseError(data.error || "Only a job title was detected. Please provide role requirements.");
+          return;
+        }
+
+        if (data?.code === "INSUFFICIENT_REQUIREMENTS") {
+          if (data.detectedRole) {
+            setSelectedRole(data.detectedRole);
+          }
+          setJdParseError(data.error || "Insufficient job requirements detected. Please add more details.");
+          return;
+        }
+
+        throw new Error(data?.error || `Failed to parse job description (HTTP ${res.status}).`);
+      }
+
       if (data.targetJob) {
         setTargetJob(data.targetJob);
+        // Clear quality disambiguation states
+        setDetectedRoles([]);
+        setSelectedRole(null);
+        setAdditionalRoleRequirements("");
         // Map requirements to evidence
         const computedMatches = mapRequirementsToEvidence(data.targetJob, candidateProfile);
         setMatches(computedMatches);
@@ -604,10 +650,83 @@ export const GuidedWorkflowModal: React.FC<GuidedWorkflowModalProps> = ({
                 />
               </div>
 
+              {/* Detected Multiple Roles Disambiguation */}
+              {detectedRoles.length > 0 && (
+                <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 space-y-3">
+                  <div className="flex items-center gap-2 text-amber-800 text-xs font-semibold">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Multiple Job Roles Detected</span>
+                  </div>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    Your input contains multiple job titles without responsibilities or requirements. Please select the specific role you want to target:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {detectedRoles.map((role) => (
+                      <button
+                        key={role}
+                        type="button"
+                        onClick={() => setSelectedRole(role)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          selectedRole === role
+                            ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                            : "bg-white text-slate-700 border-amber-300 hover:bg-amber-100/60"
+                        }`}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedRole && (
+                    <div className="mt-3 pt-3 border-t border-amber-200/70 space-y-2">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Provide Key Requirements & Responsibilities for <span className="text-indigo-600 font-bold">{selectedRole}</span>:
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={additionalRoleRequirements}
+                        onChange={(e) => setAdditionalRoleRequirements(e.target.value)}
+                        placeholder="e.g., 2+ years React experience, TypeScript, REST APIs, responsive design, Git. Responsible for frontend architecture."
+                        className="w-full p-2.5 rounded-lg border border-amber-300 bg-white text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={isParsingJd || !additionalRoleRequirements.trim()}
+                        onClick={() => {
+                          const combined = `Target Role: ${selectedRole}\nRequirements & Responsibilities:\n${additionalRoleRequirements.trim()}`;
+                          setRawJdText(combined);
+                          handleParseJobDescription(combined);
+                        }}
+                        className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-1.5 shadow-sm"
+                      >
+                        <span>Analyze Requirements for {selectedRole}</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {jdParseError && (
-                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>{jdParseError}</span>
+                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-medium">{jdParseError}</p>
+                      {jdParseRequestId && (
+                        <p className="text-[11px] text-rose-600 font-mono mt-1">
+                          Request ID: {jdParseRequestId}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleParseJobDescription()}
+                      className="px-2.5 py-1 rounded bg-rose-100 hover:bg-rose-200 text-rose-800 text-[11px] font-semibold transition-colors shrink-0"
+                    >
+                      Retry
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -623,7 +742,7 @@ export const GuidedWorkflowModal: React.FC<GuidedWorkflowModalProps> = ({
                 <button
                   type="button"
                   disabled={isParsingJd || !rawJdText.trim()}
-                  onClick={handleParseJobDescription}
+                  onClick={() => handleParseJobDescription()}
                   className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm transition-colors"
                 >
                   {isParsingJd ? (
