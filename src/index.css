@@ -31,16 +31,16 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 /* PRINT-SPECIFIC CSS RULES */
 @media print {
-  /* Hide all elements that are not print-ready */
+  /* Hide all interactive elements that are not print-ready */
   .no-print, 
   header, 
-  main, 
+  main:not(#print-cover-letter-area), 
   aside,
   button, 
   select,
   input,
-  textarea,
-  #main-applet-root > div:not(.print-only) {
+  textarea.no-print,
+  #main-applet-root > div:not(.print-only):not(.print-cover-letter-container) {
     display: none !important;
   }
 
@@ -68,8 +68,14 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     padding: 0 !important;
   }
 
+  .print-only-block {
+    display: block !important;
+  }
+
   /* Reset paper component for standard letter printing */
-  #resume-print-area {
+  #resume-print-area,
+  #print-cover-letter-area {
+    display: block !important;
     transform: none !important;
     box-shadow: none !important;
     border: none !important;
@@ -99,7 +105,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 /* SCREEN VIEW SPECIFIC RULES */
 @media screen {
-  .print-only {
+  .print-only,
+  .print-only-block {
     display: none !important;
   }
 }

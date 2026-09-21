@@ -4,20 +4,41 @@ service cloud.firestore {
     
     // Resumes Collection
     match /resumes/{resumeId} {
-      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      // Prevent ownership changes during updates
+      allow update: if request.auth != null 
+        && resource.data.userId == request.auth.uid 
+        && request.resource.data.userId == resource.data.userId;
 
       // Resume Versions Subcollection
       match /versions/{versionId} {
-        allow read, update, delete: if request.auth != null && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
-        allow create: if request.auth != null && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
+        allow read, delete: if request.auth != null 
+          && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
+        allow create: if request.auth != null 
+          && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
+        allow update: if request.auth != null 
+          && get(/databases/$(database)/documents/resumes/$(resumeId)).data.userId == request.auth.uid;
       }
     }
     
     // Cover Letters Collection
     match /coverLetters/{letterId} {
-      allow read, update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      // Prevent ownership changes during updates
+      allow update: if request.auth != null 
+        && resource.data.userId == request.auth.uid 
+        && request.resource.data.userId == resource.data.userId;
+    }
+
+    // Tailoring Sessions Collection
+    match /tailoringSessions/{sessionId} {
+      allow read, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null 
+        && resource.data.userId == request.auth.uid 
+        && request.resource.data.userId == resource.data.userId;
     }
     
   }

@@ -4,6 +4,8 @@ import {
   UploadCloud, X, File, FileUp
 } from "lucide-react";
 import { ResumeData } from "../types";
+import { getAuthToken } from "../firebase";
+import { ResumeDataSchema } from "../schemas";
 
 interface ResumeRecreatorProps {
   onParsed: (data: ResumeData) => void;
@@ -115,7 +117,7 @@ export default function ResumeRecreator({ onParsed, colorTheme }: ResumeRecreato
         }
 
         if (fileBase64) {
-          bodyData = { fileBase64, mimeType: "application/pdf" };
+          bodyData = { fileBase64, mimeType: selectedFile.type || "application/pdf" };
         } else if (rawText) {
           bodyData = { rawText };
         } else {
@@ -128,11 +130,17 @@ export default function ResumeRecreator({ onParsed, colorTheme }: ResumeRecreato
         bodyData = { rawText };
       }
 
+      const token = await getAuthToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const response = await fetch("/api/ai/parse-resume", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify(bodyData),
       });
 
@@ -142,7 +150,29 @@ export default function ResumeRecreator({ onParsed, colorTheme }: ResumeRecreato
       }
 
       if (data.parsedResume) {
-        onParsed(data.parsedResume);
+        const validation = ResumeDataSchema.safeParse(data.parsedResume);
+        if (!validation.success) {
+          console.warn("Resume parsing schema mismatch:", validation.error);
+          throw new Error("Extracted resume data had unexpected structure. Please check and retry.");
+        }
+
+        const validResume = validation.data;
+        // Check for scanned / empty text document
+        const hasContent = !!(
+          validResume.personalInfo.fullName ||
+          validResume.summary ||
+          (validResume.workExperience && validResume.workExperience.length > 0) ||
+          (validResume.education && validResume.education.length > 0) ||
+          (validResume.skills && validResume.skills.length > 0)
+        );
+
+        if (!hasContent) {
+          throw new Error(
+            "This document appears to be scanned or contains non-selectable image text. Please copy and paste the plain text into the 'Paste Raw Text' tab instead."
+          );
+        }
+
+        onParsed(validResume);
       } else {
         throw new Error("Invalid response received from AI parsing engine.");
       }

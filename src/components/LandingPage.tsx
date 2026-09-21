@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { 
-  Sparkles, FileText, ArrowRight, Upload, ClipboardCopy, Mail, Sliders, Check, BookOpen, User, PenTool, LayoutGrid, HelpCircle, Cloud
+  Sparkles, FileText, ArrowRight, Upload, ClipboardCopy, Mail, Sliders, Check, BookOpen, User, PenTool, LayoutGrid, HelpCircle, Cloud, Target, ShieldCheck
 } from "lucide-react";
 import { User as FirebaseUser } from "firebase/auth";
 import { TemplateId, ResumeData, LayoutSettings } from "../types";
@@ -17,6 +17,7 @@ interface LandingPageProps {
   onOpenCoverLetter: () => void;
   onLoadResume: (data: ResumeData, layout: LayoutSettings, id?: string, name?: string) => void;
   onLoadCoverLetter: (targetRole: string, targetCompany: string, jobDescription: string, content: string) => void;
+  onOpenGuidedWorkflow?: () => void;
 }
 
 export default function LandingPage({
@@ -26,7 +27,8 @@ export default function LandingPage({
   onStartParsed,
   onOpenCoverLetter,
   onLoadResume,
-  onLoadCoverLetter
+  onLoadCoverLetter,
+  onOpenGuidedWorkflow
 }: LandingPageProps) {
   // Config state
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>("modern");
@@ -47,6 +49,15 @@ export default function LandingPage({
           <span className="text-sm font-black text-slate-900 tracking-tight">Resumify Career Suite</span>
         </div>
         <div className="flex items-center space-x-4">
+          {onOpenGuidedWorkflow && (
+            <button
+              onClick={onOpenGuidedWorkflow}
+              className="hidden sm:flex items-center space-x-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 py-1.5 px-3 rounded-lg font-bold transition-all shadow-sm cursor-pointer"
+            >
+              <Target className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Tailor to Job Description</span>
+            </button>
+          )}
           <AuthHeaderWidget />
         </div>
       </header>
@@ -61,14 +72,28 @@ export default function LandingPage({
         <div className="max-w-4xl mx-auto relative z-10 text-center space-y-4">
           <div className="inline-flex items-center space-x-2 bg-indigo-500/20 border border-indigo-400/30 px-3 py-1 rounded-full text-indigo-300 text-[10px] font-extrabold uppercase tracking-widest animate-pulse">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Next-Gen Career Suite</span>
+            <span>Factual AI Resume Tailoring</span>
           </div>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight font-sans">
             Craft PDF-Perfect Resumes & Cover Letters
           </h1>
           <p className="text-xs md:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
-            Choose a manually refined design template. Build a new resume from scratch, recreate/parse an existing resume using Gemini AI, or draft matching executive cover letters in minutes.
+            Upload your resume and paste a job description to extract verified facts, match requirements, review proposed improvements, and export. Zero hallucinated qualifications.
           </p>
+
+          {/* Primary Action Buttons */}
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+            {onOpenGuidedWorkflow && (
+              <button
+                onClick={onOpenGuidedWorkflow}
+                className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-600/30 flex items-center space-x-2 transition-all cursor-pointer"
+              >
+                <Target className="w-4 h-4" />
+                <span>Launch Job-Targeted Studio</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -252,16 +277,16 @@ export default function LandingPage({
             <span className="text-[9px] font-extrabold uppercase tracking-widest text-indigo-300">Why Resumify?</span>
             <div className="space-y-2">
               <div className="flex items-start space-x-2 text-[11px] text-slate-200">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <p><strong>Factual Grounding</strong>: Never fabricates degrees, employers, or metrics.</p>
+              </div>
+              <div className="flex items-start space-x-2 text-[11px] text-slate-200">
                 <span className="text-emerald-400 font-bold">✓</span>
                 <p><strong>Vector PDF Quality</strong>: Crisp text, no blurry rasterization.</p>
               </div>
               <div className="flex items-start space-x-2 text-[11px] text-slate-200">
                 <span className="text-emerald-400 font-bold">✓</span>
-                <p><strong>Strict Privacy</strong>: Data lives locally or parses directly.</p>
-              </div>
-              <div className="flex items-start space-x-2 text-[11px] text-slate-200">
-                <span className="text-emerald-400 font-bold">✓</span>
-                <p><strong>AI-Optimized Words</strong>: Built-in professional verb selectors.</p>
+                <p><strong>Strict User Isolation</strong>: Local drafts and cloud data are account-scoped.</p>
               </div>
             </div>
           </div>

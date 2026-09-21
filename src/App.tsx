@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Sparkles, Download, Upload, Printer, ZoomIn, ZoomOut, RotateCcw, 
-  FileJson, Check, Sliders, Type, HelpCircle, X, Palette, LayoutGrid, Home, ArrowLeft, MessageSquare, Loader2, Cloud
+  FileJson, Check, Sliders, Type, HelpCircle, X, Palette, LayoutGrid, Home, ArrowLeft, MessageSquare, Loader2, Cloud, Target, AlertTriangle
 } from "lucide-react";
 import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 import { collection, addDoc } from "firebase/firestore";
@@ -17,6 +17,7 @@ import AuthHeaderWidget from "./components/AuthHeaderWidget";
 import AtsReviewPanel from "./components/AtsReviewPanel";
 import ResumeVersionHistory from "./components/ResumeVersionHistory";
 import AiToolkitPanel from "./components/AiToolkitPanel";
+import { GuidedWorkflowModal } from "./components/GuidedWorkflowModal";
 
 const COLOR_PRESETS = [
   { name: "Ocean Blue", value: "#0284c7" },
@@ -31,6 +32,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<"landing" | "builder" | "cover-letter">("landing");
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isCoachOpen, setIsCoachOpen] = useState<boolean>(false);
+  const [isGuidedWorkflowOpen, setIsGuidedWorkflowOpen] = useState<boolean>(false);
   const [loadedCoverLetter, setLoadedCoverLetter] = useState<{ targetRole: string; targetCompany: string; jobDescription: string; content: string } | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"edit" | "version" | "ats" | "ai-toolkit">("edit");
 
@@ -57,6 +59,35 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  // Account-Scoped Local Storage draft keys
+  const getDraftStorageKey = (uid?: string | null) => `resume_draft_${uid || "anon"}`;
+  const getLayoutStorageKey = (uid?: string | null) => `resume_layout_${uid || "anon"}`;
+
+  // Restore draft when user changes or on startup
+  useEffect(() => {
+    const draftKey = getDraftStorageKey(user?.uid);
+    const layoutKey = getLayoutStorageKey(user?.uid);
+    const savedData = localStorage.getItem(draftKey);
+    const savedLayout = localStorage.getItem(layoutKey);
+
+    if (savedData && savedLayout) {
+      try {
+        setResumeData(JSON.parse(savedData));
+        setLayoutSettings(JSON.parse(savedLayout));
+      } catch (e) {
+        console.error("Failed to parse saved local draft", e);
+      }
+    }
+  }, [user?.uid]);
+
+  // Sync to account-scoped local storage on changes
+  useEffect(() => {
+    const draftKey = getDraftStorageKey(user?.uid);
+    const layoutKey = getLayoutStorageKey(user?.uid);
+    localStorage.setItem(draftKey, JSON.stringify(resumeData));
+    localStorage.setItem(layoutKey, JSON.stringify(layoutSettings));
+  }, [resumeData, layoutSettings, user?.uid]);
 
   // Cloud Saving states
   const [isCloudSaving, setIsCloudSaving] = useState(false);
@@ -149,7 +180,6 @@ export default function App() {
     setActiveResumeId(null);
     setActiveResumeName(null);
     setResumeData(parsedData);
-    // Use an elegant default template for parsed resume
     setLayoutSettings({
       template: "modern",
       colorTheme: "#4f46e5",
@@ -160,28 +190,6 @@ export default function App() {
     });
     setCurrentPage("builder");
   };
-
-  // Autosave / Load from localStorage on startup
-  useEffect(() => {
-    const savedData = localStorage.getItem("resume_builder_data");
-    const savedLayout = localStorage.getItem("resume_builder_layout");
-    
-    if (savedData && savedLayout) {
-      try {
-        setResumeData(JSON.parse(savedData));
-        setLayoutSettings(JSON.parse(savedLayout));
-        console.log("Autosave draft restored successfully.");
-      } catch (e) {
-        console.error("Failed to parse saved local draft", e);
-      }
-    }
-  }, []);
-
-  // Sync to local storage on changes
-  useEffect(() => {
-    localStorage.setItem("resume_builder_data", JSON.stringify(resumeData));
-    localStorage.setItem("resume_builder_layout", JSON.stringify(layoutSettings));
-  }, [resumeData, layoutSettings]);
 
   // Load a preset template
   const handleLoadPreset = (key: string) => {
@@ -233,7 +241,7 @@ export default function App() {
   // Export/Download JSON Draft
   const handleExportJSON = () => {
     const backup = {
-      version: "1.0",
+      version: "2.0",
       resumeData,
       layoutSettings
     };
@@ -273,9 +281,32 @@ export default function App() {
       }
     };
     reader.readAsText(file);
-    // Clear input
     event.target.value = "";
   };
+
+  // Scan for unresolved placeholders before export
+  const findUnresolvedPlaceholders = (data: ResumeData): string[] => {
+    const textBlocks: string[] = [
+      data.summary,
+      ...data.workExperience.flatMap((w) => w.description),
+      ...data.projects.flatMap((p) => p.description),
+      data.customSection?.content || "",
+    ];
+
+    const placeholders: string[] = [];
+    const regex = /\[(.*?)\]/g;
+
+    textBlocks.forEach((block) => {
+      let match;
+      while ((match = regex.exec(block)) !== null) {
+        placeholders.push(match[0]);
+      }
+    });
+
+    return Array.from(new Set(placeholders));
+  };
+
+  const unresolvedPlaceholders = findUnresolvedPlaceholders(resumeData);
 
   // Handle PDF Export / Browser Print
   const triggerPrint = () => {
@@ -284,7 +315,6 @@ export default function App() {
 
   const confirmPrint = () => {
     setShowPrintModal(false);
-    // Tiny delay to allow state changes to settle
     setTimeout(() => {
       window.print();
     }, 150);
@@ -305,18 +335,33 @@ export default function App() {
 
   if (currentPage === "landing") {
     return (
-      <LandingPage
-        user={user}
-        onStartScratch={handleStartScratch}
-        onStartPreset={handleStartPreset}
-        onStartParsed={handleStartParsed}
-        onOpenCoverLetter={() => {
-          setLoadedCoverLetter(null);
-          setCurrentPage("cover-letter");
-        }}
-        onLoadResume={handleLoadResume}
-        onLoadCoverLetter={handleLoadCoverLetter}
-      />
+      <>
+        <LandingPage
+          user={user}
+          onStartScratch={handleStartScratch}
+          onStartPreset={handleStartPreset}
+          onStartParsed={handleStartParsed}
+          onOpenCoverLetter={() => {
+            setLoadedCoverLetter(null);
+            setCurrentPage("cover-letter");
+          }}
+          onLoadResume={handleLoadResume}
+          onLoadCoverLetter={handleLoadCoverLetter}
+          onOpenGuidedWorkflow={() => setIsGuidedWorkflowOpen(true)}
+        />
+        <GuidedWorkflowModal
+          isOpen={isGuidedWorkflowOpen}
+          onClose={() => setIsGuidedWorkflowOpen(false)}
+          currentResume={resumeData}
+          onApplyTailoredResume={(tailored) => {
+            setResumeData(tailored);
+            setCurrentPage("builder");
+          }}
+          onTriggerExport={() => {
+            triggerPrint();
+          }}
+        />
+      </>
     );
   }
 
@@ -375,6 +420,16 @@ export default function App() {
           <AuthHeaderWidget />
 
           <div className="h-4 w-px bg-slate-200 mx-1" />
+
+          {/* Guided Tailor to Job Button */}
+          <button
+            onClick={() => setIsGuidedWorkflowOpen(true)}
+            className="flex items-center space-x-1.5 text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 py-1.5 px-3 rounded-lg font-bold transition-all shadow-sm cursor-pointer"
+            title="Launch Job-Targeted Studio to tailor this resume to a specific job posting"
+          >
+            <Target className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline">Tailor to Job</span>
+          </button>
 
           {/* Preset templates selector */}
           <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg py-1 px-2.5">
@@ -573,7 +628,6 @@ export default function App() {
                       title={col.name}
                     />
                   ))}
-                  {/* Hex Picker fallback */}
                   <input 
                     type="color" 
                     value={layoutSettings.colorTheme}
@@ -750,7 +804,7 @@ export default function App() {
         <ResumePreview 
           resumeData={resumeData}
           layoutSettings={layoutSettings}
-          zoom={1} // Keep print sizing at crisp absolute 100% vector scale
+          zoom={1}
         />
       </div>
 
@@ -775,6 +829,19 @@ export default function App() {
 
             {/* Body */}
             <div className="p-5 space-y-4">
+              {/* Unresolved Placeholders Warning if present */}
+              {unresolvedPlaceholders.length > 0 && (
+                <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Warning: {unresolvedPlaceholders.length} Unresolved Placeholder(s) Detected</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed">
+                    We noticed bracketed placeholders in your draft (e.g. {unresolvedPlaceholders.slice(0, 3).join(", ")}). Make sure to replace them with your real metrics before submitting to employers!
+                  </p>
+                </div>
+              )}
+
               <p className="text-sm text-slate-600 leading-normal">
                 To export your custom resume to a vector-sharp, text-selectable PDF, we use the browser's native print engine. For the absolute best results, please review these optimal printer preferences:
               </p>
@@ -831,12 +898,27 @@ export default function App() {
           </div>
         </div>
       )}
+
       {/* AI Career Assistant Coach Sidebar overlay */}
       <AICoachSidebar 
         resumeData={resumeData}
         isOpen={isCoachOpen}
         onClose={() => setIsCoachOpen(false)}
         accentColor={layoutSettings.colorTheme || "#4f46e5"}
+      />
+
+      {/* Guided Job-Targeted Studio Modal */}
+      <GuidedWorkflowModal
+        isOpen={isGuidedWorkflowOpen}
+        onClose={() => setIsGuidedWorkflowOpen(false)}
+        currentResume={resumeData}
+        onApplyTailoredResume={(tailored) => {
+          setResumeData(tailored);
+          setCurrentPage("builder");
+        }}
+        onTriggerExport={() => {
+          triggerPrint();
+        }}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { ResumeData, LayoutSettings, WorkExperience, Education, Project } from "../types";
 import { Mail, Phone, MapPin, Globe, Linkedin, Github, ExternalLink } from "lucide-react";
+import { formatResumeDate } from "../utils/dateUtils";
 
 interface ResumePreviewProps {
   resumeData: ResumeData;
@@ -55,21 +56,10 @@ export default function ResumePreview({ resumeData, layoutSettings, zoom }: Resu
     loose: "p-10",
   }[spacing];
 
-  // Helper to format dates beautifully (e.g. "2023-03" -> "Mar 2023")
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return "Present";
-    try {
-      const date = new Date(dateStr + "-02"); // Add day to prevent timezone issues
-      return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  // Helper to highlight bracketed metrics
+  // Helper to highlight bracketed metrics while preserving brackets and flagging unresolved placeholders
   const highlightMetrics = (text: string) => {
     if (!text) return "";
-    // Matches content in brackets like [X%] or [$100K]
+    // Matches content in brackets like [X%] or [15%] or [$100K]
     const regex = /\[(.*?)\]/g;
     const parts = [];
     let lastIdx = 0;
@@ -79,14 +69,19 @@ export default function ResumePreview({ resumeData, layoutSettings, zoom }: Resu
       if (match.index > lastIdx) {
         parts.push(text.substring(lastIdx, match.index));
       }
+      
+      const placeholderContent = match[1];
+      const isUnresolved = /^(x%?|\.\.\.|insert|your|custom|placeholder)/i.test(placeholderContent.trim()) ||
+        /\b\d+\b/.test(placeholderContent); // Any bracketed metric is an unconfirmed guideline
+
       parts.push(
-        <strong 
+        <span 
           key={match.index} 
-          style={{ color: colorTheme }} 
-          className="font-semibold"
+          title="Placeholder guideline: replace with your actual verified metric before export"
+          className="inline-flex items-center px-1 py-0.2 mx-0.5 rounded text-[11px] font-mono font-bold bg-amber-50 text-amber-900 border border-amber-300 shadow-2xs"
         >
-          {match[1]}
-        </strong>
+          [{placeholderContent}]
+        </span>
       );
       lastIdx = regex.lastIndex;
     }
@@ -276,7 +271,7 @@ export default function ResumePreview({ resumeData, layoutSettings, zoom }: Resu
               {workExperience.map((exp) => (
                 <div key={exp.id} className="page-break-avoid grid grid-cols-1 md:grid-cols-12 gap-1 py-1">
                   <div className="md:col-span-3 text-slate-500 font-medium">
-                    {formatDate(exp.startDate)} – {exp.current ? "Present" : formatDate(exp.endDate)}
+                    {formatResumeDate(exp.startDate)} – {exp.current ? "Present" : (formatResumeDate(exp.endDate) || "Present")}
                   </div>
                   <div className="md:col-span-9 space-y-1">
                     <div className="flex items-start justify-between flex-wrap">
@@ -370,7 +365,7 @@ export default function ResumePreview({ resumeData, layoutSettings, zoom }: Resu
               {education.map((edu) => (
                 <div key={edu.id} className="page-break-avoid grid grid-cols-1 md:grid-cols-12 gap-1 py-1">
                   <div className="md:col-span-3 text-slate-500 font-medium">
-                    {formatDate(edu.startDate)} – {edu.endDate ? formatDate(edu.endDate) : "Present"}
+                    {formatResumeDate(edu.startDate)} – {edu.endDate ? formatResumeDate(edu.endDate) : "Present"}
                   </div>
                   <div className="md:col-span-9 flex justify-between items-start flex-wrap">
                     <div>

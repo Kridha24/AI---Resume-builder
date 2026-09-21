@@ -4,6 +4,7 @@ import {
   ChevronDown, ChevronUp, Plus, Trash2, ArrowUp, ArrowDown, Check, Loader2, Layout, FileText
 } from "lucide-react";
 import { ResumeData, LayoutSettings, WorkExperience, Education, Project, SkillCategory } from "../types";
+import { getAuthToken } from "../firebase";
 
 interface ResumeFormProps {
   resumeData: ResumeData;
@@ -55,9 +56,13 @@ export default function ResumeForm({
     
     setAiLoading(prev => ({ ...prev, summary: true }));
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/generate-summary", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ jobTitle, skills: allSkills.slice(0, 5) })
       });
       const data = await res.json();
@@ -85,9 +90,13 @@ export default function ResumeForm({
 
     setAiLoading(prev => ({ ...prev, refineSummary: true }));
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/refine-summary", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ summary: currentSummary, jobTitle })
       });
       const data = await res.json();
@@ -114,9 +123,13 @@ export default function ResumeForm({
 
     setAiLoading(prev => ({ ...prev, skills: true }));
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/suggest-skills", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ jobTitle })
       });
       const data = await res.json();
@@ -166,9 +179,13 @@ export default function ResumeForm({
 
     setAiLoading(prev => ({ ...prev, [key]: true }));
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/enhance-bullet", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ bullet: originalText, role, company })
       });
       const data = await res.json();
@@ -737,7 +754,8 @@ export default function ResumeForm({
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Start Date</label>
                       <input 
-                        type="month" 
+                        type="text" 
+                        placeholder="e.g. 2023-03 or Mar 2023"
                         value={exp.startDate}
                         onChange={(e) => updateExperience(exp.id, "startDate", e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded py-1 px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -747,7 +765,8 @@ export default function ResumeForm({
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">End Date</label>
                         <input 
-                          type="month" 
+                          type="text" 
+                          placeholder="e.g. 2024-01 or Present"
                           value={exp.endDate}
                           onChange={(e) => updateExperience(exp.id, "endDate", e.target.value)}
                           className="w-full bg-white border border-slate-200 rounded py-1 px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1143,7 +1162,8 @@ export default function ResumeForm({
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">Start Date</label>
                       <input 
-                        type="month" 
+                        type="text" 
+                        placeholder="e.g. 2017-09 or Sep 2017"
                         value={edu.startDate}
                         onChange={(e) => updateEducation(edu.id, "startDate", e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded py-1 px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -1152,7 +1172,8 @@ export default function ResumeForm({
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">End Date</label>
                       <input 
-                        type="month" 
+                        type="text" 
+                        placeholder="e.g. 2021-05 or May 2021"
                         value={edu.endDate}
                         onChange={(e) => updateEducation(edu.id, "endDate", e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded py-1 px-2 text-xs text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"

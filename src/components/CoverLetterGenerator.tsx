@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Sparkles, Loader2, ClipboardCopy, Printer, RotateCcw, ArrowLeft, Mail, Phone, MapPin, Check, FileText, Cloud, MessageSquare } from "lucide-react";
 import { collection, addDoc } from "firebase/firestore";
-import { db, auth } from "../firebase";
+import { db, auth, getAuthToken } from "../firebase";
 import { ResumeData, LayoutSettings } from "../types";
 import AICoachSidebar from "./AICoachSidebar";
 
@@ -83,9 +83,15 @@ export default function CoverLetterGenerator({
     try {
       const skillsList = resumeData.skills.map(s => `${s.name}: ${s.skills.join(", ")}`).join(" | ");
       
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const response = await fetch("/api/ai/generate-cover-letter", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           fullName: resumeData.personalInfo.fullName,
           targetRole,
@@ -268,7 +274,7 @@ export default function CoverLetterGenerator({
       </div>
 
       {/* RIGHT: PREVIEW SHEET (print-only on print) */}
-      <div className="flex-1 p-6 overflow-y-auto flex flex-col items-center justify-start min-h-0 bg-slate-100 relative">
+      <div className="print-cover-letter-container flex-1 p-6 overflow-y-auto flex flex-col items-center justify-start min-h-0 bg-slate-100 relative">
         
         {/* Letter controls (no-print) */}
         <div className="no-print w-full max-w-[720px] bg-white border border-slate-200 rounded-xl px-4 py-2.5 mb-5 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center justify-between shrink-0">
@@ -397,14 +403,24 @@ export default function CoverLetterGenerator({
             {/* Editable or generated body */}
             <div className="space-y-5 leading-relaxed text-slate-700 whitespace-pre-wrap">
               {coverLetterText ? (
-                <textarea
-                  value={coverLetterText}
-                  onChange={(e) => setCoverLetterText(e.target.value)}
-                  className="w-full bg-transparent border-0 focus:ring-0 focus:outline-none p-0 resize-none h-[700px] text-xs leading-relaxed font-sans text-slate-700"
-                  style={{
-                    fontFamily: layoutSettings.fontFamily === 'serif' ? 'Georgia, serif' : layoutSettings.fontFamily === 'mono' ? 'monospace' : 'inherit'
-                  }}
-                />
+                <>
+                  <textarea
+                    value={coverLetterText}
+                    onChange={(e) => setCoverLetterText(e.target.value)}
+                    className="no-print w-full bg-transparent border-0 focus:ring-0 focus:outline-none p-0 resize-none h-[700px] text-xs leading-relaxed font-sans text-slate-700"
+                    style={{
+                      fontFamily: layoutSettings.fontFamily === 'serif' ? 'Georgia, serif' : layoutSettings.fontFamily === 'mono' ? 'monospace' : 'inherit'
+                    }}
+                  />
+                  <div
+                    className="print-only-block w-full text-xs leading-relaxed text-slate-800 whitespace-pre-wrap"
+                    style={{
+                      fontFamily: layoutSettings.fontFamily === 'serif' ? 'Georgia, serif' : layoutSettings.fontFamily === 'mono' ? 'monospace' : 'inherit'
+                    }}
+                  >
+                    {coverLetterText}
+                  </div>
+                </>
               ) : (
                 <div className="h-[600px] flex flex-col items-center justify-center text-center space-y-3 py-16 text-slate-400 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
                   <div className="p-3 bg-white rounded-full shadow-sm">

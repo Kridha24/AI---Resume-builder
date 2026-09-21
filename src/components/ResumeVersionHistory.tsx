@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { 
   History, Plus, Trash2, Clock, Check, Loader2, AlertCircle, Save, Database, ArrowLeftRight 
 } from "lucide-react";
-import { collection, query, getDocs, doc, deleteDoc, addDoc } from "firebase/firestore";
+import { collection, query, getDocs, doc, deleteDoc, addDoc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { ResumeData, LayoutSettings } from "../types";
 
@@ -86,6 +86,56 @@ export default function ResumeVersionHistory({
       setVersions([]);
     }
   }, [activeResumeId]);
+
+  // Overwrite Save to the current document
+  const handleOverwriteSave = async () => {
+    if (!activeResumeId) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const docRef = doc(db, "resumes", activeResumeId);
+      await updateDoc(docRef, {
+        data: resumeData,
+        layout: layoutSettings,
+        updatedAt: new Date().toISOString(),
+      });
+      setSuccessMsg(`"${activeResumeName}" saved successfully!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      console.error(err);
+      setError("Failed to save changes: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Save As a brand new document copy
+  const handleSaveAs = async () => {
+    const newName = prompt("Enter a name for the new resume copy:", `${activeResumeName || "Resume"} (Copy)`);
+    if (!newName || !newName.trim()) return;
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const resumesRef = collection(db, "resumes");
+      const newDoc = await addDoc(resumesRef, {
+        userId,
+        name: newName.trim(),
+        data: resumeData,
+        layout: layoutSettings,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      onSetCloudResume(newDoc.id, newName.trim());
+      setSuccessMsg(`Saved copy as "${newName.trim()}"!`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      console.error(err);
+      setError("Failed to save copy: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleSaveInitialCloud = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,10 +326,32 @@ export default function ResumeVersionHistory({
         </div>
       </div>
 
+      {/* Cloud Save Actions: Save vs Save As */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={handleOverwriteSave}
+          disabled={isSaving}
+          className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+        >
+          <Save className="w-3.5 h-3.5" />
+          <span>Save Changes</span>
+        </button>
+        <button
+          type="button"
+          onClick={handleSaveAs}
+          disabled={isSaving}
+          className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-all shadow-sm flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+        >
+          <Plus className="w-3.5 h-3.5 text-slate-500" />
+          <span>Save As Copy</span>
+        </button>
+      </div>
+
       {/* Save version Form */}
       <div className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm space-y-3">
         <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block">
-          Snapshot Current State
+          Create Snapshot Version
         </span>
 
         <form onSubmit={handleCreateVersion} className="flex gap-2">

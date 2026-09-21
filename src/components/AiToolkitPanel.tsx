@@ -5,6 +5,8 @@ import {
   Trash2, Award, Zap, HeartHandshake, Info
 } from "lucide-react";
 import { ResumeData } from "../types";
+import { getAuthToken } from "../firebase";
+import { isFresher } from "../utils/alignmentScore";
 
 interface AiToolkitPanelProps {
   resumeData: ResumeData;
@@ -23,6 +25,12 @@ export default function AiToolkitPanel({
   const [isLoading, setIsLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Qualification confirmation state
+  const [confirmingQualification, setConfirmingQualification] = useState<{
+    type: "skill" | "certification";
+    name: string;
+  } | null>(null);
 
   // States for Feature 1: Translation
   const [targetLang, setTargetLang] = useState("Spanish");
@@ -107,37 +115,53 @@ export default function AiToolkitPanel({
       });
     }
 
+    // Fresher check
+    const fresher = isFresher(resumeData);
+
     // Rule 2: Quantified Bullet Density (STAR Method metric count)
-    const bullets = (resumeData.workExperience || []).flatMap(exp => exp.description || []);
+    const workBullets = (resumeData.workExperience || []).flatMap(exp => exp.description || []);
+    const projBullets = (resumeData.projects || []).flatMap(p => p.description || []);
+    const bullets = fresher && workBullets.length === 0 ? projBullets : workBullets;
     const metricRegex = /\b\d+([.,]\d+)?%?\b|(?:\$|usd)\s*\d+|\b\d+\s*(?:\+|-|plus|years|hours|million|thousand|k|m|b)\b/i;
     const quantifiedBullets = bullets.filter(b => metricRegex.test(b));
     const density = bullets.length > 0 ? (quantifiedBullets.length / bullets.length) * 100 : 0;
 
     if (bullets.length === 0) {
-      score -= 20;
-      items.push({
-        id: "metrics",
-        label: "Work Bullet Metrics & Impact",
-        description: "No work experience bullet points defined yet.",
-        status: "fail",
-        tip: "Add professional bullet points highlighting metrics and specific results."
-      });
-    } else if (density >= 35) {
+      if (fresher) {
+        score -= 10;
+        items.push({
+          id: "metrics",
+          label: "Project Outcome Bullets",
+          description: "Add detailed outcome bullet points to your academic/portfolio projects.",
+          status: "warning",
+          tip: "Include quantifiable project scope or technical milestones."
+        });
+      } else {
+        score -= 20;
+        items.push({
+          id: "metrics",
+          label: "Work Bullet Metrics & Impact",
+          description: "No work experience bullet points defined yet.",
+          status: "fail",
+          tip: "Add professional bullet points highlighting metrics and specific results."
+        });
+      }
+    } else if (density >= 30 || (fresher && density >= 15)) {
       items.push({
         id: "metrics",
         label: "High Impact Metric Density",
-        description: `${Math.round(density)}% of your bullet points contain tangible metrics or dollar figures.`,
+        description: `${Math.round(density)}% of your bullet points contain tangible metrics or outcomes.`,
         status: "pass",
-        tip: "Excellent. ATS parsers look for numbers indicating quantifiable high-impact outcomes."
+        tip: "Excellent. Parsers look for numbers indicating quantifiable high-impact outcomes."
       });
     } else {
-      score -= 15;
+      score -= 10;
       items.push({
         id: "metrics",
-        label: "Low Metric Density",
-        description: `Only ${Math.round(density)}% of your bullets contain metrics. Recruiters expect at least 35%.`,
+        label: "Moderate Metric Density",
+        description: `Only ${Math.round(density)}% of your bullets contain metrics. Aim for at least 30%.`,
         status: "warning",
-        tip: "Try revising sentences using our Bullet Point Enhancer to append numbers like [15%] or [$50K]."
+        tip: "Try revising sentences using our Bullet Point Enhancer to add verified measurements."
       });
     }
 
@@ -166,7 +190,7 @@ export default function AiToolkitPanel({
       items.push({
         id: "bullet-length",
         label: "Ideal Sentence Lengths",
-        description: "All experience statements are perfectly proportioned (35 to 200 characters).",
+        description: "All experience/project statements are well-proportioned (35 to 200 characters).",
         status: "pass",
         tip: "Great formatting. Keeps the human reader engaged and scanner scores optimal."
       });
@@ -175,25 +199,39 @@ export default function AiToolkitPanel({
     // Rule 4: Structural Section Coverage
     const hasSummary = !!resumeData.summary?.trim();
     const hasExperience = (resumeData.workExperience || []).length > 0;
+    const hasProjects = (resumeData.projects || []).length > 0;
     const hasEducation = (resumeData.education || []).length > 0;
     const hasSkills = (resumeData.skills || []).flatMap(c => c.skills || []).length > 0;
 
-    if (hasSummary && hasExperience && hasEducation && hasSkills) {
+    const sectionsComplete = fresher
+      ? hasSummary && hasProjects && hasEducation && hasSkills
+      : hasSummary && hasExperience && hasEducation && hasSkills;
+
+    if (sectionsComplete) {
       items.push({
         id: "sections",
         label: "Structural Section Integrity",
-        description: "Summary, Work History, Education, and Skills sections are all covered.",
+        description: fresher
+          ? "Summary, Projects, Education, and Skills sections are all covered for early-career profile."
+          : "Summary, Work History, Education, and Skills sections are all covered.",
         status: "pass",
         tip: "Perfect layout scaffolding. Ensures a comprehensive review profile."
       });
     } else {
       score -= 15;
+      const missingSections = [
+        !hasSummary && "Summary",
+        !hasExperience && !fresher && "Experience",
+        fresher && !hasProjects && "Projects",
+        !hasEducation && "Education",
+        !hasSkills && "Skills"
+      ].filter(Boolean);
       items.push({
         id: "sections",
         label: "Missing Critical Sections",
-        description: `Your profile lacks: ${[!hasSummary && "Summary", !hasExperience && "Experience", !hasEducation && "Education", !hasSkills && "Skills"].filter(Boolean).join(", ")}.`,
+        description: `Your profile lacks: ${missingSections.join(", ")}.`,
         status: "fail",
-        tip: "Ensure all core elements are populated. Standard ATS parsers reject incomplete profiles."
+        tip: "Ensure all core elements are populated. Standard parsers reject incomplete profiles."
       });
     }
 
@@ -248,9 +286,13 @@ export default function AiToolkitPanel({
     setIsLoading(true);
     setErrorMsg(null);
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/translate-resume", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ resumeData, targetLanguage: targetLang })
       });
       const data = await res.json();
@@ -276,9 +318,13 @@ export default function AiToolkitPanel({
     setIsLoading(true);
     setErrorMsg(null);
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/tailor-resume", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ resumeData, jobDescription })
       });
       const data = await res.json();
@@ -305,19 +351,7 @@ export default function AiToolkitPanel({
   };
 
   const applyTailoredSkill = (skill: string) => {
-    setResumeData(prev => {
-      const updated = [...prev.skills];
-      if (updated.length === 0) {
-        updated.push({ id: "skill-tailor", name: "Core Skills", skills: [skill] });
-      } else {
-        if (!updated[0].skills.some(s => s.toLowerCase() === skill.toLowerCase())) {
-          updated[0] = { ...updated[0], skills: [...updated[0].skills, skill] };
-        }
-      }
-      return { ...prev, skills: updated };
-    });
-    setSuggestedSkills(prev => prev.filter(s => s !== skill));
-    showFeedback(`Added "${skill}" to your skills category!`);
+    setConfirmingQualification({ type: "skill", name: skill });
   };
 
   // Feature 3: Scan Clichés action
@@ -325,9 +359,13 @@ export default function AiToolkitPanel({
     setIsLoading(true);
     setErrorMsg(null);
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/audit-cliche", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ resumeData })
       });
       const data = await res.json();
@@ -390,9 +428,13 @@ export default function AiToolkitPanel({
     setIsLoading(true);
     setErrorMsg(null);
     try {
+      const token = await getAuthToken();
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
       const res = await fetch("/api/ai/skill-gap", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ resumeData, jobTitle: gapJobTitle, jobDescription: gapJobDesc })
       });
       const data = await res.json();
@@ -423,7 +465,7 @@ export default function AiToolkitPanel({
     });
     setMissingSkills(prev => prev.filter(s => s !== skill));
     setMatchingSkills(prev => [...prev, skill]);
-    showFeedback(`Added "${skill}" to your resume skills list!`);
+    showFeedback(`Added verified skill "${skill}" to your resume!`);
   };
 
   const addGapCertification = (cert: string) => {
@@ -435,9 +477,19 @@ export default function AiToolkitPanel({
       return { ...prev, certifications: updated };
     });
     setCertifications(prev => prev.filter(c => c !== cert));
-    showFeedback(`Added "${cert}" to your certifications block!`);
+    showFeedback(`Added verified credential "${cert}" to your certifications block!`);
   };
 
+  const handleConfirmQualification = () => {
+    if (!confirmingQualification) return;
+    if (confirmingQualification.type === "skill") {
+      addMissingSkill(confirmingQualification.name);
+      setSuggestedSkills(prev => prev.filter(s => s !== confirmingQualification.name));
+    } else {
+      addGapCertification(confirmingQualification.name);
+    }
+    setConfirmingQualification(null);
+  };
   return (
     <div className="flex flex-col h-full bg-slate-50 border-r border-slate-200">
       {/* Title & Desc */}
@@ -851,16 +903,16 @@ export default function AiToolkitPanel({
                 <div className="bg-white p-3.5 border border-slate-150 rounded-xl space-y-2 shadow-sm">
                   <span className="text-[10px] font-bold text-rose-500 uppercase tracking-widest flex items-center space-x-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
-                    <span>Critical Missing Skills ({missingSkills.length})</span>
+                    <span>Unevidenced Skills from Job Description ({missingSkills.length})</span>
                   </span>
                   <p className="text-[9px] text-slate-400 font-semibold leading-normal">
-                    Click items to insert them instantly into your resume category block:
+                    These are requirements from the JD that are not yet evidenced in your profile. Confirm if you have verified experience:
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {missingSkills.map((sk, index) => (
                       <button
                         key={index}
-                        onClick={() => addMissingSkill(sk)}
+                        onClick={() => setConfirmingQualification({ type: "skill", name: sk })}
                         className="bg-rose-50/50 hover:bg-rose-50 border border-rose-100 hover:border-rose-200 text-rose-800 text-[10px] font-bold px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <Plus className="w-3.5 h-3.5 text-rose-500 shrink-0" />
@@ -875,17 +927,20 @@ export default function AiToolkitPanel({
                   <div className="bg-white p-3.5 border border-slate-150 rounded-xl space-y-2 shadow-sm">
                     <span className="text-[10px] font-bold text-amber-600 uppercase tracking-widest flex items-center space-x-1">
                       <Award className="w-3.5 h-3.5" />
-                      <span>Recommended Certifications</span>
+                      <span>Recommended Learning & Training to Explore</span>
                     </span>
+                    <p className="text-[9px] text-slate-400 font-semibold leading-normal">
+                      Courses or credentials that could fill requirement gaps. Only add if you have already earned them:
+                    </p>
                     <div className="space-y-1.5">
                       {certifications.map((cert, index) => (
                         <div key={index} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-100 text-[11px] font-bold text-slate-800">
                           <span>{cert}</span>
                           <button
-                            onClick={() => addGapCertification(cert)}
+                            onClick={() => setConfirmingQualification({ type: "certification", name: cert })}
                             className="text-[9px] bg-violet-50 hover:bg-violet-100 text-violet-700 px-2 py-1 rounded cursor-pointer border border-violet-100 font-bold"
                           >
-                            Add to Resume
+                            I Have Earned This
                           </button>
                         </div>
                       ))}
@@ -896,6 +951,40 @@ export default function AiToolkitPanel({
             )}
           </div>
         )}
+
+      {/* Explicit Confirmation Modal */}
+      {confirmingQualification && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-5 max-w-md w-full shadow-xl space-y-4">
+            <div className="flex items-center space-x-2 text-slate-900">
+              <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0" />
+              <h4 className="text-sm font-bold">Confirm Qualification Evidence</h4>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Do you have verified experience or credentials with <strong>"{confirmingQualification.name}"</strong>?
+            </p>
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800 leading-normal">
+              <strong>Application Invariant:</strong> Employer job descriptions supply requirements, never candidate facts. Adding unearned qualifications or false credentials can disqualify you during employer verification.
+            </div>
+            <div className="flex items-center justify-end space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmingQualification(null)}
+                className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmQualification}
+                className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold cursor-pointer transition-all"
+              >
+                Yes, I Have Verified Experience
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
         {/* Tab 5: ATS Formatting & Readability Checklist */}
         {activeTab === "ats-audit" && (
